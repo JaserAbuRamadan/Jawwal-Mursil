@@ -59,7 +59,7 @@ if uploaded_file and selected_sheet:
                 st.error("Error: The selected sheet must have at least 5 columns.")
             else:
                 # Data processing logic
-                mobiles = df.iloc[:, 2].dropna().astype(str).str[2:]
+                mobiles = df.iloc[:, 2].dropna().astype(str).str[2:12]
                 col_numeric = pd.to_numeric(df.iloc[:, 3], errors='coerce').fillna(0)
                 col_text = df.iloc[:, 4].astype(str).str.strip().str.lower()
 
