@@ -125,6 +125,15 @@ if df_preview is not None:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- 3. Process Button & Results ----------
+if df_preview is not None and mobile_col and numeric_col and text_col:
+    if st.button("🚀 Process & Categorize Data"):
+        try:
+            df = df_preview.copy()
+
+            processed_df = pd.DataFrame({
+                "Mobile": df[mobile_col].apply(normalize_mobile),
+                "NumericVal": df[numeric_col].apply(parse_numeric),
+                "TextVal": df[text_col].apply(normalize_label),
             }).dropna(subset=["Mobile"])
 
             g1 = processed_df[processed_df["TextVal"] == "yes"]["Mobile"]
