@@ -48,6 +48,11 @@ def normalize_mobile(raw) -> str | None:
     """
     if pd.isna(raw):
         return None
+    # Excel often stores numbers as floats (599000000 -> 599000000.0).
+    # Cast whole-number floats to int first so we don't pick up a stray
+    # trailing digit from the ".0".
+    if isinstance(raw, float) and raw.is_integer():
+        raw = int(raw)
     digits = re.sub(r"\D", "", str(raw))
     if len(digits) < 9:
         return None
@@ -121,7 +126,10 @@ if df_preview is not None:
     text_col = st.selectbox("🏷️ Status / Label column (Yes / No / USSD)", columns,
                              index=guess_index(["status", "login", "label"], min(2, len(columns) - 1)))
 
-    st.dataframe(df_preview.head(5), use_container_width=True)
+    # Replace NaN with empty strings for display only — a raw NaN in the
+    # preview table can crash Streamlit's frontend JSON serializer.
+    safe_preview = df_preview.head(5).where(pd.notnull(df_preview.head(5)), "")
+    st.dataframe(safe_preview, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- 3. Process Button & Results ----------
