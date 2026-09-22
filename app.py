@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import pandas as pd
 
@@ -34,63 +35,126 @@ st.markdown("""
 st.title("⚡ Excel Data Segmenter Pro")
 st.markdown("<p style='color: #94a3b8;'>Upload your Excel file to automatically clean, filter, and sort your mobile numbers.</p>", unsafe_allow_html=True)
 
-# 1. File Upload Card
+
+# ---------- Helper functions ----------
+
+def normalize_mobile(raw) -> str | None:
+    """
+    Turn any of these into the same normalized number:
+      +970599000000, 970599000000, 0599000000, 599000000
+    Assumption: the real subscriber number is always the LAST 9 digits,
+    and we re-add the 970 country code for a consistent output.
+    Returns None if there aren't at least 9 digits (can't be a valid mobile).
+    """
+    if pd.isna(raw):
+        return None
+    digits = re.sub(r"\D", "", str(raw))
+    if len(digits) < 9:
+        return None
+    local9 = digits[-9:]
+    return "970" + local9
+
+
+def normalize_label(raw) -> str:
+    """
+    Collapse label variants into 'yes' / 'no' / 'unknown'.
+    Handles: 'Yes', 'USSD', 'No', 'No Login Before', 'no login', etc.
+    """
+    if pd.isna(raw):
+        return "unknown"
+    t = str(raw).strip().lower()
+    if "yes" in t or "ussd" in t:
+        return "yes"
+    if t.startswith("no"):
+        return "no"
+    return "unknown"
+
+
+def parse_numeric(raw) -> float:
+    """Strip currency symbols/commas/spaces before converting to a number."""
+    if pd.isna(raw):
+        return 0.0
+    cleaned = re.sub(r"[^\d.\-]", "", str(raw))
+    try:
+        return float(cleaned) if cleaned not in ("", "-", ".") else 0.0
+    except ValueError:
+        return 0.0
+
+
+# ---------- 1. File Upload Card ----------
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader("📁 1. Source File")
 uploaded_file = st.file_uploader("Choose an Excel file", type=["xlsx", "xls"])
 
 selected_sheet = None
+df_preview = None
 if uploaded_file is not None:
     try:
         excel_file = pd.ExcelFile(uploaded_file)
         sheet_names = excel_file.sheet_names
         selected_sheet = st.selectbox("Target Sheet", sheet_names)
+        if selected_sheet:
+            df_preview = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
     except Exception as e:
         st.error(f"Could not read sheets: {e}")
 st.markdown('</div>', unsafe_allow_html=True)
 
-# 2. Process Button & Results
-if uploaded_file and selected_sheet:
-    if st.button("🚀 Process & Categorize Data"):
-        try:
-            df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
-            
-            if df.shape[1] < 5:
-                st.error("Error: The selected sheet must have at least 5 columns.")
-            else:
-                # Data processing logic
-                mobiles = df.iloc[:, 2].dropna().astype(str).str[2:12]
-                col_numeric = pd.to_numeric(df.iloc[:, 3], errors='coerce').fillna(0)
-                col_text = df.iloc[:, 4].astype(str).str.strip().str.lower()
+# ---------- 2. Column Mapping Card ----------
+mobile_col = numeric_col = text_col = None
+if df_preview is not None:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("🧭 2. Map Your Columns")
+    st.markdown("<p style='color:#94a3b8; font-size:13px;'>Column order isn't always the same, so pick them manually.</p>", unsafe_allow_html=True)
 
-                processed_df = pd.DataFrame({
-                    'Mobile': mobiles,
-                    'NumericVal': col_numeric,
-                    'TextVal': col_text
-                }).dropna(subset=['Mobile'])
+    columns = list(df_preview.columns)
 
-                g1 = processed_df[processed_df['TextVal'].isin(['yes', 'ussd'])]['Mobile']
-                g2 = processed_df[(processed_df['TextVal'] == 'no login before') & (processed_df['NumericVal'] < 20)]['Mobile']
-                g3 = processed_df[(processed_df['TextVal'] == 'no login before') & (processed_df['NumericVal'] >= 20)]['Mobile']
+    def guess_index(keywords, default=0):
+        for i, c in enumerate(columns):
+            if any(k in str(c).lower() for k in keywords):
+                return i
+        return default
 
-                st.success("Processing complete!")
+    mobile_col = st.selectbox("📱 Mobile Number column", columns,
+                               index=guess_index(["mobile", "phone", "number"], 0))
+    numeric_col = st.selectbox("💰 CashIn / Numeric column", columns,
+                                index=guess_index(["cash", "amount", "value"], min(1, len(columns) - 1)))
+    text_col = st.selectbox("🏷️ Status / Label column (Yes / No / USSD)", columns,
+                             index=guess_index(["status", "login", "label"], min(2, len(columns) - 1)))
 
-                # Results Cards
-                groups = [
-                    ("Group 1: 'Yes' or 'USSD'", g1),
-                    ("Group 2: 'No Login Before' AND CashIn < 20", g2),
-                    ("Group 3: 'No Login Before' AND CashIn >= 20", g3)
-                ]
+    st.dataframe(df_preview.head(5), use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-                for title, group_data in groups:
-                    text_result = ','.join(group_data)
-                    st.markdown(f"""
-                        <div class="card">
-                            <h4 style="color: #f8fafc; margin-top: 0;">{title}</h4>
-                            <p style="color: #94a3b8; font-size: 14px;">Total Items: <b>{len(group_data)}</b></p>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    st.text_area(f"Copy {title}", text_result, height=80, key=title)
+# ---------- 3. Process Button & Results ----------
+            }).dropna(subset=["Mobile"])
+
+            g1 = processed_df[processed_df["TextVal"] == "yes"]["Mobile"]
+            g2 = processed_df[(processed_df["TextVal"] == "no") & (processed_df["NumericVal"] < 20)]["Mobile"]
+            g3 = processed_df[(processed_df["TextVal"] == "no") & (processed_df["NumericVal"] >= 20)]["Mobile"]
+            unmatched = processed_df[processed_df["TextVal"] == "unknown"]
+
+            st.success("Processing complete!")
+
+            if len(unmatched) > 0:
+                st.warning(f"⚠️ {len(unmatched)} rows had a label that wasn't recognized as Yes/USSD/No and were skipped. "
+                           f"Examples: {df[text_col].dropna().astype(str).unique()[:10].tolist()}")
+
+            groups = [
+                ("Group 1: 'Yes' or 'USSD'", g1),
+                ("Group 2: 'No' AND CashIn < 20", g2),
+                ("Group 3: 'No' AND CashIn >= 20", g3),
+            ]
+
+            for title, group_data in groups:
+                text_result = ','.join(group_data)
+                st.markdown(f"""
+                    <div class="card">
+                        <h4 style="color: #f8fafc; margin-top: 0;">{title}</h4>
+                        <p style="color: #94a3b8; font-size: 14px;">Total Items: <b>{len(group_data)}</b></p>
+                    </div>
+                """, unsafe_allow_html=True)
+                st.text_area(f"Copy {title}", text_result, height=80, key=title)
 
         except Exception as e:
             st.error(f"Processing Error: {e}")
+elif df_preview is not None:
+    st.info("Select all three columns above to enable processing.")
