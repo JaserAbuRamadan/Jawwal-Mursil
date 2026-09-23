@@ -248,13 +248,13 @@ if "results" in st.session_state:
             batches = chunk_list(numbers, batch_size)
             st.markdown("<p style='color:#94a3b8; font-size:13px;'>Tap a batch to open Messages with those numbers and the message above pre-filled:</p>", unsafe_allow_html=True)
 
-            # Render strictly in row order (1,2,3,4 / 5,6,7,8 ...) instead of
+            # Render strictly in row order (1,2,3 / 4,5,6 ...) instead of
             # round-robin column fill, and force LTR so batch order can't get
             # visually flipped by the surrounding Arabic text.
-            cols_per_row = 4
+            cols_per_row = 3
             for row_start in range(0, len(batches), cols_per_row):
                 row_batches = batches[row_start:row_start + cols_per_row]
-                cols = st.columns(len(row_batches))
+                cols = st.columns(cols_per_row)  # fixed 3 slots -> even grid, last row can be partial
                 for offset, batch in enumerate(row_batches):
                     batch_number = row_start + offset + 1
                     link = build_sms_link(batch, message)
@@ -262,10 +262,10 @@ if "results" in st.session_state:
                     with cols[offset]:
                         st.markdown(
                             f'<a href="{link}" target="_blank" dir="ltr" '
-                            f'onclick="this.style.opacity=\'0.4\';" '
-                            f'style="display:block; text-align:center; background:#3b82f6; '
-                            f'color:white; font-weight:bold; padding:8px; border-radius:6px; '
-                            f'text-decoration:none; margin-bottom:8px; transition:opacity 0.2s;">'
+                            f'onclick="this.style.background=\'#16a34a\';" '
+                            f'style="display:block; text-align:center; background:#1e3a8a; '
+                            f'color:white; font-weight:bold; padding:10px 6px; border-radius:8px; '
+                            f'text-decoration:none; margin-bottom:8px; transition:background-color 0.2s;">'
                             f'{label}</a>',
                             unsafe_allow_html=True,
                         )
