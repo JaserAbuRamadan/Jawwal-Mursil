@@ -100,6 +100,13 @@ if uploaded_file is not None:
         selected_sheet = st.selectbox("Target Sheet", sheet_names)
         if selected_sheet:
             df_preview = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+            # Blank header cells in the Excel file can come through as NaN
+            # column names, which crashes Streamlit's dataframe display
+            # (it can't JSON-serialize a NaN used as a column name/key).
+            df_preview.columns = [
+                str(c) if pd.notna(c) else f"Column_{i}"
+                for i, c in enumerate(df_preview.columns)
+            ]
     except Exception as e:
         st.error(f"Could not read sheets: {e}")
 st.markdown('</div>', unsafe_allow_html=True)
