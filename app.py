@@ -157,6 +157,30 @@ if df_preview is not None:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- 3. Process Button & Results ----------
+# ---------- Hardcoded group messages ----------
+GROUP_MESSAGES = {
+    "Group 1: 'Yes' or 'USSD'": (
+        "يعطيك العافية،معك جاسر من شركة جوال.\n"
+        "يرجى شحن محفظتك ب 20 شيكل اليوم او في اسرع وقت.\n"
+        "لضمان استمرار خدمة جوال بي\n"
+        "شكراً لتعاونك."
+    ),
+    "Group 2: 'No' AND CashIn < 20": (
+        "يعطيك العافية،معك جاسر من شركة جوال\n"
+        "يرجى شحن محفظتك في اسرع وقت ب 20 شيكل\n"
+        "وتفعيل خدمة ال USSD كود\n"
+        "*110#\n"
+        "لضمان استمرار خدمة جوال بي"
+    ),
+    "Group 3: 'No' AND CashIn >= 20": (
+        "يعطيك العافية،معك جاسر من شركة جوال\n"
+        "يرجى استخدام محفظتك في اسرع وقت ويمكنك تفعيل خدمة ال USSD كود\n"
+        "*110#\n"
+        "لضمان استمرار خدمة جوال بي"
+    ),
+}
+
+
 if df_preview is not None and mobile_col and numeric_col and text_col:
     if st.button("🚀 Process & Categorize Data"):
         try:
@@ -201,20 +225,18 @@ if df_preview is not None and mobile_col and numeric_col and text_col:
                 """, unsafe_allow_html=True)
                 st.text_area(f"Copy {title}", text_result, height=80, key=title)
 
-                message = st.text_area(f"Message for {title}", key=f"msg_{title}", height=70,
-                                        placeholder="Type the message to send this group...")
+                message = GROUP_MESSAGES[title]
+                st.text_area(f"Message for {title} (fixed)", message, height=100, key=f"msg_{title}", disabled=True)
 
-                if numbers and message.strip():
+                if numbers:
                     batches = chunk_list(numbers, batch_size)
-                    st.markdown("<p style='color:#94a3b8; font-size:13px;'>Tap a batch to open Messages with those numbers and the text above pre-filled:</p>", unsafe_allow_html=True)
+                    st.markdown("<p style='color:#94a3b8; font-size:13px;'>Tap a batch to open Messages with those numbers and the message above pre-filled:</p>", unsafe_allow_html=True)
                     cols = st.columns(min(4, len(batches)) or 1)
                     for i, batch in enumerate(batches):
                         link = build_sms_link(batch, message)
                         label = f"📲 Batch {i + 1} ({len(batch)})"
                         with cols[i % len(cols)]:
                             st.markdown(f'<a href="{link}" target="_blank" style="display:block; text-align:center; background:#3b82f6; color:white; font-weight:bold; padding:8px; border-radius:6px; text-decoration:none; margin-bottom:8px;">{label}</a>', unsafe_allow_html=True)
-                elif numbers:
-                    st.caption("Type a message above to enable the Messages buttons.")
 
         except Exception as e:
             st.error(f"Processing Error: {e}")
