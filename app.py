@@ -58,7 +58,7 @@ def normalize_mobile(raw) -> str | None:
     if len(digits) < 9:
         return None
     local9 = digits[-9:]
-    return "0" + local9
+    return " 0" + local9
 
 
 def normalize_label(raw) -> str:
