@@ -98,7 +98,7 @@ def build_sms_link(numbers_batch, message) -> str:
     Build an sms: URI that opens the phone's default Messages app with the
     given recipients and message pre-filled (Android-style '?body=' syntax).
     """
-    numbers_str = ",".join(numbers_batch)
+    numbers_str = ";".join(numbers_batch)
     body = urllib.parse.quote(message)
     return f"sms:{numbers_str}?body={body}"
 
