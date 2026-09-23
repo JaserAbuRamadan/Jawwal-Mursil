@@ -40,10 +40,10 @@ st.markdown("<p style='color: #94a3b8;'>Upload your Excel file to automatically 
 
 def normalize_mobile(raw) -> str | None:
     """
-    Turn any of these into the same normalized number:
-      +970599000000, 970599000000, 0599000000, 599000000
+    Turn any of these into the same normalized LOCAL number:
+      +970599000000, 970599000000, 0599000000, 599000000  ->  0599000000
     Assumption: the real subscriber number is always the LAST 9 digits,
-    and we re-add the 970 country code for a consistent output.
+    and we re-add a leading 0 for a consistent local-format output.
     Returns None if there aren't at least 9 digits (can't be a valid mobile).
     """
     if pd.isna(raw):
@@ -57,7 +57,7 @@ def normalize_mobile(raw) -> str | None:
     if len(digits) < 9:
         return None
     local9 = digits[-9:]
-    return "970" + local9
+    return "0" + local9
 
 
 def normalize_label(raw) -> str:
