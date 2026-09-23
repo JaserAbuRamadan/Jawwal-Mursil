@@ -1,4 +1,5 @@
 import re
+import urllib.parse
 import streamlit as st
 import pandas as pd
 
@@ -86,6 +87,22 @@ def parse_numeric(raw) -> float:
         return 0.0
 
 
+def chunk_list(items, size):
+    """Split a list into batches so a single sms: link doesn't get too long."""
+    items = list(items)
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def build_sms_link(numbers_batch, message) -> str:
+    """
+    Build an sms: URI that opens the phone's default Messages app with the
+    given recipients and message pre-filled (Android-style '?body=' syntax).
+    """
+    numbers_str = ",".join(numbers_batch)
+    body = urllib.parse.quote(message)
+    return f"sms:{numbers_str}?body={body}"
+
+
 # ---------- 1. File Upload Card ----------
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader("📁 1. Source File")
@@ -100,6 +117,13 @@ if uploaded_file is not None:
         selected_sheet = st.selectbox("Target Sheet", sheet_names)
         if selected_sheet:
             df_preview = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+            # Blank header cells in the Excel file can come through as NaN
+            # column names, which crashes Streamlit's dataframe display
+            # (it can't JSON-serialize a NaN used as a column name/key).
+            df_preview.columns = [
+                str(c) if pd.notna(c) else f"Column_{i}"
+                for i, c in enumerate(df_preview.columns)
+            ]
     except Exception as e:
         st.error(f"Could not read sheets: {e}")
 st.markdown('</div>', unsafe_allow_html=True)
@@ -161,15 +185,36 @@ if df_preview is not None and mobile_col and numeric_col and text_col:
                 ("Group 3: 'No' AND CashIn >= 20", g3),
             ]
 
+            batch_size = st.number_input(
+                "Numbers per Messages batch (splitting avoids link/recipient limits on some phones)",
+                min_value=1, max_value=100, value=20, step=5,
+            )
+
             for title, group_data in groups:
-                text_result = ','.join(group_data)
+                numbers = list(group_data)
+                text_result = ','.join(numbers)
                 st.markdown(f"""
                     <div class="card">
                         <h4 style="color: #f8fafc; margin-top: 0;">{title}</h4>
-                        <p style="color: #94a3b8; font-size: 14px;">Total Items: <b>{len(group_data)}</b></p>
+                        <p style="color: #94a3b8; font-size: 14px;">Total Items: <b>{len(numbers)}</b></p>
                     </div>
                 """, unsafe_allow_html=True)
                 st.text_area(f"Copy {title}", text_result, height=80, key=title)
+
+                message = st.text_area(f"Message for {title}", key=f"msg_{title}", height=70,
+                                        placeholder="Type the message to send this group...")
+
+                if numbers and message.strip():
+                    batches = chunk_list(numbers, batch_size)
+                    st.markdown("<p style='color:#94a3b8; font-size:13px;'>Tap a batch to open Messages with those numbers and the text above pre-filled:</p>", unsafe_allow_html=True)
+                    cols = st.columns(min(4, len(batches)) or 1)
+                    for i, batch in enumerate(batches):
+                        link = build_sms_link(batch, message)
+                        label = f"📲 Batch {i + 1} ({len(batch)})"
+                        with cols[i % len(cols)]:
+                            st.markdown(f'<a href="{link}" target="_blank" style="display:block; text-align:center; background:#3b82f6; color:white; font-weight:bold; padding:8px; border-radius:6px; text-decoration:none; margin-bottom:8px;">{label}</a>', unsafe_allow_html=True)
+                elif numbers:
+                    st.caption("Type a message above to enable the Messages buttons.")
 
         except Exception as e:
             st.error(f"Processing Error: {e}")
