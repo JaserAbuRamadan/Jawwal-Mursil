@@ -1,4 +1,5 @@
 import re
+import urllib.parse
 import streamlit as st
 import pandas as pd
 
@@ -86,6 +87,26 @@ def parse_numeric(raw) -> float:
         return 0.0
 
 
+def chunk_list(items, size):
+    """Split a list into batches so a single sms: link doesn't get too long."""
+    items = list(items)
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def build_sms_link(numbers_batch, message) -> str:
+    """
+    Build an sms: URI that opens the phone's default Messages app with the
+    given recipients and message pre-filled (Android-style '?body=' syntax).
+    NOTE: MIUI's Messaging app (com.android.mms) does not split multiple
+    recipients on a comma the way stock Android does - it treats the whole
+    comma-joined string as one recipient. Semicolon works as the separator
+    on MIUI instead.
+    """
+    numbers_str = ";".join(numbers_batch)
+    body = urllib.parse.quote(message)
+    return f"sms:{numbers_str}?body={body}"
+
+
 # ---------- 1. File Upload Card ----------
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader("📁 1. Source File")
@@ -140,6 +161,30 @@ if df_preview is not None:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- 3. Process Button & Results ----------
+# ---------- Hardcoded group messages ----------
+GROUP_MESSAGES = {
+    "Group 1: 'Yes' or 'USSD'": (
+        "يعطيك العافية،معك جاسر من شركة جوال.\n"
+        "يرجى شحن محفظتك ب 20 شيكل اليوم او في اسرع وقت.\n"
+        "لضمان استمرار خدمة جوال بي\n"
+        "شكراً لتعاونك."
+    ),
+    "Group 2: 'No' AND CashIn < 20": (
+        "يعطيك العافية،معك جاسر من شركة جوال\n"
+        "يرجى شحن محفظتك في اسرع وقت ب 20 شيكل\n"
+        "وتفعيل خدمة ال USSD كود\n"
+        "*110#\n"
+        "لضمان استمرار خدمة جوال بي"
+    ),
+    "Group 3: 'No' AND CashIn >= 20": (
+        "يعطيك العافية،معك جاسر من شركة جوال\n"
+        "يرجى استخدام محفظتك في اسرع وقت ويمكنك تفعيل خدمة ال USSD كود\n"
+        "*110#\n"
+        "لضمان استمرار خدمة جوال بي"
+    ),
+}
+
+
 if df_preview is not None and mobile_col and numeric_col and text_col:
     if st.button("🚀 Process & Categorize Data"):
         try:
@@ -151,34 +196,78 @@ if df_preview is not None and mobile_col and numeric_col and text_col:
                 "TextVal": df[text_col].apply(normalize_label),
             }).dropna(subset=["Mobile"])
 
-            g1 = processed_df[processed_df["TextVal"] == "yes"]["Mobile"]
-            g2 = processed_df[(processed_df["TextVal"] == "no") & (processed_df["NumericVal"] < 20)]["Mobile"]
-            g3 = processed_df[(processed_df["TextVal"] == "no") & (processed_df["NumericVal"] >= 20)]["Mobile"]
+            g1 = list(processed_df[processed_df["TextVal"] == "yes"]["Mobile"])
+            g2 = list(processed_df[(processed_df["TextVal"] == "no") & (processed_df["NumericVal"] < 20)]["Mobile"])
+            g3 = list(processed_df[(processed_df["TextVal"] == "no") & (processed_df["NumericVal"] >= 20)]["Mobile"])
             unmatched = processed_df[processed_df["TextVal"] == "unknown"]
 
-            st.success("Processing complete!")
-
-            if len(unmatched) > 0:
-                st.warning(f"⚠️ {len(unmatched)} rows had a label that wasn't recognized as Yes/USSD/No and were skipped. "
-                           f"Examples: {df[text_col].dropna().astype(str).unique()[:10].tolist()}")
-
-            groups = [
-                ("Group 1: 'Yes' or 'USSD'", g1),
-                ("Group 2: 'No' AND CashIn < 20", g2),
-                ("Group 3: 'No' AND CashIn >= 20", g3),
-            ]
-
-            for title, group_data in groups:
-                text_result = ','.join(group_data)
-                st.markdown(f"""
-                    <div class="card">
-                        <h4 style="color: #f8fafc; margin-top: 0;">{title}</h4>
-                        <p style="color: #94a3b8; font-size: 14px;">Total Items: <b>{len(group_data)}</b></p>
-                    </div>
-                """, unsafe_allow_html=True)
-                st.text_area(f"Copy {title}", text_result, height=80, key=title)
-
+            # Stash results in session_state so they survive reruns caused by
+            # other widgets (like the batch-size input) instead of vanishing
+            # because st.button() only returns True on the run right after
+            # it's clicked.
+            st.session_state["results"] = {
+                "Group 1: 'Yes' or 'USSD'": g1,
+                "Group 2: 'No' AND CashIn < 20": g2,
+                "Group 3: 'No' AND CashIn >= 20": g3,
+                "unmatched_count": len(unmatched),
+                "unmatched_examples": df[text_col].dropna().astype(str).unique()[:10].tolist(),
+            }
         except Exception as e:
             st.error(f"Processing Error: {e}")
+
+# ---------- 4. Render results (independent of the button, so batch-size
+# changes and other widget interactions don't wipe the results) ----------
+if "results" in st.session_state:
+    results = st.session_state["results"]
+    st.success("Processing complete!")
+
+    if results["unmatched_count"] > 0:
+        st.warning(f"⚠️ {results['unmatched_count']} rows had a label that wasn't recognized as Yes/USSD/No and were skipped. "
+                   f"Examples: {results['unmatched_examples']}")
+
+    batch_size = st.number_input(
+        "Numbers per Messages batch (splitting avoids link/recipient limits on some phones)",
+        min_value=1, max_value=100, value=20, step=5, key="batch_size",
+    )
+
+    for title in ["Group 1: 'Yes' or 'USSD'", "Group 2: 'No' AND CashIn < 20", "Group 3: 'No' AND CashIn >= 20"]:
+        numbers = results[title]
+        text_result = ','.join(numbers)
+        st.markdown(f"""
+            <div class="card">
+                <h4 style="color: #f8fafc; margin-top: 0;">{title}</h4>
+                <p style="color: #94a3b8; font-size: 14px;">Total Items: <b>{len(numbers)}</b></p>
+            </div>
+        """, unsafe_allow_html=True)
+        st.text_area(f"Copy {title}", text_result, height=80, key=title)
+
+        message = GROUP_MESSAGES[title]
+        st.text_area(f"Message for {title} (fixed)", message, height=100, key=f"msg_{title}", disabled=True)
+
+        if numbers:
+            batches = chunk_list(numbers, batch_size)
+            st.markdown("<p style='color:#94a3b8; font-size:13px;'>Tap a batch to open Messages with those numbers and the message above pre-filled:</p>", unsafe_allow_html=True)
+
+            # Render strictly in row order (1,2,3 / 4,5,6 ...) instead of
+            # round-robin column fill, and force LTR so batch order can't get
+            # visually flipped by the surrounding Arabic text.
+            cols_per_row = 3
+            for row_start in range(0, len(batches), cols_per_row):
+                row_batches = batches[row_start:row_start + cols_per_row]
+                cols = st.columns(cols_per_row)  # fixed 3 slots -> even grid, last row can be partial
+                for offset, batch in enumerate(row_batches):
+                    batch_number = row_start + offset + 1
+                    link = build_sms_link(batch, message)
+                    label = f"📲 Batch {batch_number} ({len(batch)})"
+                    with cols[offset]:
+                        st.markdown(
+                            f'<a href="{link}" target="_blank" dir="ltr" '
+                            f'onclick="this.style.background=\'#16a34a\';" '
+                            f'style="display:block; text-align:center; background:#1e3a8a; '
+                            f'color:white; font-weight:bold; padding:10px 6px; border-radius:8px; '
+                            f'text-decoration:none; margin-bottom:8px; transition:background-color 0.2s;">'
+                            f'{label}</a>',
+                            unsafe_allow_html=True,
+                        )
 elif df_preview is not None:
     st.info("Select all three columns above to enable processing.")
