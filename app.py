@@ -239,7 +239,7 @@ if "results" in st.session_state:
                 <p style="color: #94a3b8; font-size: 14px;">Total Items: <b>{len(numbers)}</b></p>
             </div>
         """, unsafe_allow_html=True)
-        st.text_area(f"Copy {title}", text_result, height=80, key=title)
+        st.text_area(f"Copy {title}", text_result, height=80)
 
         message = GROUP_MESSAGES[title]
         st.text_area(f"Message for {title} (fixed)", message, height=100, key=f"msg_{title}", disabled=True)
