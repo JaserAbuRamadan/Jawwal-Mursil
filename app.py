@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 
 # Page Configuration & Modern Dark Theme Styling
-st.set_page_config(page_title=" Jawwal Mursil ", page_icon="⚡", layout="centered")
+st.set_page_config(page_title="جوال مرسل", page_icon="⚡", layout="centered")
 
 st.markdown("""
     <style>
@@ -57,16 +57,23 @@ st.markdown("""
         direction: ltr !important;
         text-align: left !important;
     }
+    /* The device toggle: zoom (not transform:scale) so the layout box
+       actually grows with it — scale() left the longer "أندرويد" label
+       clipped outside the original bounds. */
+    div[data-testid="stToggle"] {
+        zoom: 1.35;
+        margin: 10px 0;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Jawwal Mursil")
+st.title("⚡ Jawwal Mursil ")
 st.markdown("<p style='color: #94a3b8;'>ارفع ملف الإكسل ليتم تلقائيًا تنظيف أرقام الجوال وتصنيفها وترتيبها.</p>", unsafe_allow_html=True)
 
 agent_name = st.text_input(
     "👤 الاسم الذي سيظهر في الرسائل بدل \"جاسر\"",
-    value="جاسر"
-,).strip() or "جاسر"
+    value="جاسر",
+).strip() or "جاسر"
 
 
 # ---------- Helper functions ----------
@@ -122,17 +129,21 @@ def chunk_list(items, size):
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def build_sms_link(numbers_batch, message) -> str:
+def build_sms_link(numbers_batch, message, platform="android") -> str:
     """
     Build an sms: URI that opens the phone's default Messages app with the
-    given recipients and message pre-filled (Android-style '?body=' syntax).
-    NOTE: MIUI's Messaging app (com.android.mms) does not split multiple
-    recipients on a comma the way stock Android does - it treats the whole
-    comma-joined string as one recipient. Semicolon works as the separator
-    on MIUI instead.
+    given recipients and message pre-filled. Android and iPhone disagree on
+    two things:
+      - the separator between multiple recipients (MIUI/Android needs ';',
+        iPhone's Messages expects ',')
+      - the character introducing the body param ('?body=' on Android,
+        '&body=' on iPhone — undocumented but the convention that works)
     """
-    numbers_str = ";".join(numbers_batch)
     body = urllib.parse.quote(message)
+    if platform == "iphone":
+        numbers_str = ",".join(numbers_batch)
+        return f"sms:{numbers_str}&body={body}"
+    numbers_str = ";".join(numbers_batch)
     return f"sms:{numbers_str}?body={body}"
 
 
@@ -410,6 +421,13 @@ if "results" in st.session_state:
         min_value=1, max_value=100, value=20, step=5, key="batch_size",
     )
 
+    device_is_iphone = st.toggle(
+        "📱 آيفون" if st.session_state.get("device_is_iphone") else "📱 أندرويد",
+        key="device_is_iphone",
+        help="بدّل حسب نوع الهاتف الذي سيتم إرسال الرسائل منه",
+    )
+    platform = "iphone" if device_is_iphone else "android"
+
     for title in ["Group 1: 'Yes' or 'USSD'", "Group 2: 'No' AND CashIn < 20", "Group 3: 'No' AND CashIn >= 20"]:
         numbers = results[title]
         label_ar = GROUP_LABELS_AR[title]
@@ -438,7 +456,7 @@ if "results" in st.session_state:
                 cols = st.columns(cols_per_row)  # fixed 3 slots -> even grid, last row can be partial
                 for offset, batch in enumerate(row_batches):
                     batch_number = row_start + offset + 1
-                    link = build_sms_link(batch, message)
+                    link = build_sms_link(batch, message, platform)
                     label = f"📲 الدفعة {batch_number} ({len(batch)})"
                     with cols[offset]:
                         st.markdown(
