@@ -35,7 +35,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Jawwal Mursi")
+st.title("⚡ Jawwal Mursil")
 st.markdown("<p style='color: #94a3b8;'>ارفع ملف الإكسل ليتم تلقائيًا تنظيف أرقام الجوال وتصنيفها وترتيبها.</p>", unsafe_allow_html=True)
 
 
