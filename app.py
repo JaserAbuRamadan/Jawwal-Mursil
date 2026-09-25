@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 
 # Page Configuration & Modern Dark Theme Styling
-st.set_page_config(page_title=" Jawwal Mursil", page_icon="⚡", layout="centered")
+st.set_page_config(page_title=" Jawwal Mursil ", page_icon="⚡", layout="centered")
 
 st.markdown("""
     <style>
@@ -12,6 +12,18 @@ st.markdown("""
         background-color: #0f172a;
         direction: rtl;
         text-align: right;
+    }
+    /* Force RTL on every descendant EXCEPT elements that explicitly set
+       their own dir attribute (like the batch links below, which need to
+       stay LTR so number order doesn't visually flip). */
+    .main *:not([dir]), .stApp *:not([dir]) {
+        direction: rtl;
+    }
+    .main h1, .main h2, .main h3, .main h4, .main h5, .main h6,
+    .main p, .main label, .main span,
+    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+    .stApp p, .stApp label, .stApp span {
+        text-align: right !important;
     }
     .card {
         background-color: #1e293b;
@@ -32,11 +44,29 @@ st.markdown("""
     .stButton>button:hover {
         background-color: #2563eb;
     }
+    /* Phone-number / data lists must stay LTR even on an RTL page, or long
+       digit+comma runs wrap with the comma stranded at the start of a line. */
+    textarea {
+        direction: ltr !important;
+        text-align: left !important;
+    }
+    /* The dataframe preview computes its column widths assuming LTR; forcing
+       rtl on it scrambles/truncates the columns instead of just mirroring
+       them, so leave this widget's internal layout alone. */
+    .stDataFrame, .stDataFrame * {
+        direction: ltr !important;
+        text-align: left !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("⚡ Jawwal Mursil")
 st.markdown("<p style='color: #94a3b8;'>ارفع ملف الإكسل ليتم تلقائيًا تنظيف أرقام الجوال وتصنيفها وترتيبها.</p>", unsafe_allow_html=True)
+
+agent_name = st.text_input(
+    "👤 الاسم الذي سيظهر في الرسائل بدل \"جاسر\"",
+    value="جاسر"
+,).strip() or "جاسر"
 
 
 # ---------- Helper functions ----------
@@ -234,7 +264,7 @@ def auto_detect_columns(df: pd.DataFrame, columns: list):
 
 # ---------- 1. File Upload Card ----------
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.subheader("📁 1. ملف المصدر")
+st.subheader("📁 الخطوة الأولى: ملف المصدر")
 uploaded_file = st.file_uploader("اختر ملف إكسل", type=["xlsx", "xls"])
 
 selected_sheet = None
@@ -261,7 +291,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 mobile_col = numeric_col = text_col = None
 if df_preview is not None:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("🧭 2. حدد الأعمدة")
+    st.subheader("🧭 الخطوة الثانية: تحديد الأعمدة")
     st.markdown("<p style='color:#94a3b8; font-size:13px;'>يتم الكشف التلقائي من أسماء الأعمدة ومحتوى الخلايا — يمكنك التعديل يدويًا عند الحاجة.</p>", unsafe_allow_html=True)
 
     columns = list(df_preview.columns)
@@ -280,23 +310,24 @@ if df_preview is not None:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- 3. Process Button & Results ----------
-# ---------- Hardcoded group messages ----------
-GROUP_MESSAGES = {
+# ---------- Message templates ({agent_name} is filled in only when the
+# process button is clicked below, not live as the name field changes ----------
+GROUP_MESSAGE_TEMPLATES = {
     "Group 1: 'Yes' or 'USSD'": (
-        "يعطيك العافية،معك جاسر من شركة جوال.\n"
+        "يعطيك العافية،معك {agent_name} من شركة جوال.\n"
         "يرجى شحن محفظتك ب 20 شيكل اليوم او في اسرع وقت.\n"
         "لضمان استمرار خدمة جوال بي\n"
         "شكراً لتعاونك."
     ),
     "Group 2: 'No' AND CashIn < 20": (
-        "يعطيك العافية،معك جاسر من شركة جوال\n"
+        "يعطيك العافية،معك {agent_name} من شركة جوال\n"
         "يرجى شحن محفظتك في اسرع وقت ب 20 شيكل\n"
         "وتفعيل خدمة ال USSD كود\n"
         "*110#\n"
         "لضمان استمرار خدمة جوال بي"
     ),
     "Group 3: 'No' AND CashIn >= 20": (
-        "يعطيك العافية،معك جاسر من شركة جوال\n"
+        "يعطيك العافية،معك {agent_name} من شركة جوال\n"
         "يرجى استخدام محفظتك في اسرع وقت ويمكنك تفعيل خدمة ال USSD كود\n"
         "*110#\n"
         "لضمان استمرار خدمة جوال بي"
@@ -307,13 +338,14 @@ GROUP_MESSAGES = {
 # GROUP_MESSAGES lookup and st.session_state["results"] structure don't
 # need to change every time the visible wording changes.
 GROUP_LABELS_AR = {
-    "Group 1: 'Yes' or 'USSD'": "المجموعة 1: نعم أو USSD",
-    "Group 2: 'No' AND CashIn < 20": "المجموعة 2: لا و الرصيد أقل من 20",
-    "Group 3: 'No' AND CashIn >= 20": "المجموعة 3: لا و الرصيد 20 فأكثر",
+    "Group 1: 'Yes' or 'USSD'": "المجموعة 1: Yes أو USSD",
+    "Group 2: 'No' AND CashIn < 20": "المجموعة 2: No و الرصيد أقل من 20",
+    "Group 3: 'No' AND CashIn >= 20": "المجموعة 3: No و الرصيد 20 فأكثر",
 }
 
 
 if df_preview is not None and mobile_col and numeric_col and text_col:
+    st.subheader("🚀 الخطوة الثالثة: المعالجة")
     if st.button("🚀 معالجة وتصنيف البيانات"):
         try:
             df = df_preview.copy()
@@ -334,6 +366,14 @@ if df_preview is not None and mobile_col and numeric_col and text_col:
             g3 = list(processed_df[(processed_df["TextVal"] == "no") & (processed_df["NumericVal"] >= 20)]["Mobile"])
             unmatched = processed_df[processed_df["TextVal"] == "unknown"]
 
+            # Bake the current name field into the messages right now, at
+            # click time — editing the name afterward won't change anything
+            # until Process is pressed again.
+            group_messages = {
+                title: template.format(agent_name=agent_name)
+                for title, template in GROUP_MESSAGE_TEMPLATES.items()
+            }
+
             # Stash results in session_state so they survive reruns caused by
             # other widgets (like the batch-size input) instead of vanishing
             # because st.button() only returns True on the run right after
@@ -345,6 +385,7 @@ if df_preview is not None and mobile_col and numeric_col and text_col:
                 "unmatched_count": len(unmatched),
                 "unmatched_examples": df[text_col].dropna().astype(str).unique()[:10].tolist(),
                 "duplicate_count": duplicate_count,
+                "messages": group_messages,
             }
         except Exception as e:
             st.error(f"خطأ في المعالجة: {e}")
@@ -353,6 +394,7 @@ if df_preview is not None and mobile_col and numeric_col and text_col:
 # changes and other widget interactions don't wipe the results) ----------
 if "results" in st.session_state:
     results = st.session_state["results"]
+    st.subheader("📊 الخطوة الرابعة: النتائج")
     st.success("تمت المعالجة بنجاح!")
 
     if results["unmatched_count"] > 0:
@@ -380,7 +422,7 @@ if "results" in st.session_state:
         """, unsafe_allow_html=True)
         st.text_area(f"نسخ {label_ar}", text_result, height=80)
 
-        message = GROUP_MESSAGES[title]
+        message = results["messages"][title]
         st.text_area(f"رسالة {label_ar} (ثابتة)", message, height=100, key=f"msg_{title}", disabled=True)
 
         if numbers:
