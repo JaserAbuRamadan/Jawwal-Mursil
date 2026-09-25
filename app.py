@@ -4,12 +4,14 @@ import streamlit as st
 import pandas as pd
 
 # Page Configuration & Modern Dark Theme Styling
-st.set_page_config(page_title="Data Extractor Pro", page_icon="⚡", layout="centered")
+st.set_page_config(page_title=" Jawwal Mursil", page_icon="⚡", layout="centered")
 
 st.markdown("""
     <style>
-    .main {
+    .main, .stApp {
         background-color: #0f172a;
+        direction: rtl;
+        text-align: right;
     }
     .card {
         background-color: #1e293b;
@@ -33,8 +35,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Excel Data Segmenter Pro")
-st.markdown("<p style='color: #94a3b8;'>Upload your Excel file to automatically clean, filter, and sort your mobile numbers.</p>", unsafe_allow_html=True)
+st.title("⚡ Jawwal Mursi")
+st.markdown("<p style='color: #94a3b8;'>ارفع ملف الإكسل ليتم تلقائيًا تنظيف أرقام الجوال وتصنيفها وترتيبها.</p>", unsafe_allow_html=True)
 
 
 # ---------- Helper functions ----------
@@ -232,8 +234,8 @@ def auto_detect_columns(df: pd.DataFrame, columns: list):
 
 # ---------- 1. File Upload Card ----------
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.subheader("📁 1. Source File")
-uploaded_file = st.file_uploader("Choose an Excel file", type=["xlsx", "xls"])
+st.subheader("📁 1. ملف المصدر")
+uploaded_file = st.file_uploader("اختر ملف إكسل", type=["xlsx", "xls"])
 
 selected_sheet = None
 df_preview = None
@@ -241,7 +243,7 @@ if uploaded_file is not None:
     try:
         excel_file = pd.ExcelFile(uploaded_file)
         sheet_names = excel_file.sheet_names
-        selected_sheet = st.selectbox("Target Sheet", sheet_names)
+        selected_sheet = st.selectbox("الورقة المستهدفة", sheet_names)
         if selected_sheet:
             df_preview = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
             # Blank header cells in the Excel file can come through as NaN
@@ -252,23 +254,23 @@ if uploaded_file is not None:
                 for i, c in enumerate(df_preview.columns)
             ]
     except Exception as e:
-        st.error(f"Could not read sheets: {e}")
+        st.error(f"تعذر قراءة الأوراق: {e}")
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- 2. Column Mapping Card ----------
 mobile_col = numeric_col = text_col = None
 if df_preview is not None:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("🧭 2. Map Your Columns")
-    st.markdown("<p style='color:#94a3b8; font-size:13px;'>Auto-detected from header names and cell contents — override manually if needed.</p>", unsafe_allow_html=True)
+    st.subheader("🧭 2. حدد الأعمدة")
+    st.markdown("<p style='color:#94a3b8; font-size:13px;'>يتم الكشف التلقائي من أسماء الأعمدة ومحتوى الخلايا — يمكنك التعديل يدويًا عند الحاجة.</p>", unsafe_allow_html=True)
 
     columns = list(df_preview.columns)
 
     mobile_idx, numeric_idx, label_idx = auto_detect_columns(df_preview, columns)
 
-    mobile_col = st.selectbox("📱 Mobile Number column", columns, index=mobile_idx)
-    numeric_col = st.selectbox("💰 CashIn / Numeric column", columns, index=numeric_idx)
-    text_col = st.selectbox("🏷️ Status / Label column (Yes / No / USSD)", columns, index=label_idx)
+    mobile_col = st.selectbox("📱 عمود رقم الجوال", columns, index=mobile_idx)
+    numeric_col = st.selectbox("💰 عمود المبلغ / الرقم", columns, index=numeric_idx)
+    text_col = st.selectbox("🏷️ عمود الحالة (نعم / لا / USSD)", columns, index=label_idx)
 
     # Cast everything to plain strings for the preview table. Mixed-type
     # object columns (e.g. some rows numeric, some text/blank) crash
@@ -301,9 +303,18 @@ GROUP_MESSAGES = {
     ),
 }
 
+# Display-only Arabic labels. Internal keys above stay in English so the
+# GROUP_MESSAGES lookup and st.session_state["results"] structure don't
+# need to change every time the visible wording changes.
+GROUP_LABELS_AR = {
+    "Group 1: 'Yes' or 'USSD'": "المجموعة 1: نعم أو USSD",
+    "Group 2: 'No' AND CashIn < 20": "المجموعة 2: لا و الرصيد أقل من 20",
+    "Group 3: 'No' AND CashIn >= 20": "المجموعة 3: لا و الرصيد 20 فأكثر",
+}
+
 
 if df_preview is not None and mobile_col and numeric_col and text_col:
-    if st.button("🚀 Process & Categorize Data"):
+    if st.button("🚀 معالجة وتصنيف البيانات"):
         try:
             df = df_preview.copy()
 
@@ -336,44 +347,45 @@ if df_preview is not None and mobile_col and numeric_col and text_col:
                 "duplicate_count": duplicate_count,
             }
         except Exception as e:
-            st.error(f"Processing Error: {e}")
+            st.error(f"خطأ في المعالجة: {e}")
 
 # ---------- 4. Render results (independent of the button, so batch-size
 # changes and other widget interactions don't wipe the results) ----------
 if "results" in st.session_state:
     results = st.session_state["results"]
-    st.success("Processing complete!")
+    st.success("تمت المعالجة بنجاح!")
 
     if results["unmatched_count"] > 0:
-        st.warning(f"⚠️ {results['unmatched_count']} rows had a label that wasn't recognized as Yes/USSD/No and were skipped. "
-                   f"Examples: {results['unmatched_examples']}")
+        st.warning(f"⚠️ {results['unmatched_count']} صفوف تحتوي على قيمة غير معروفة (ليست نعم/USSD/لا) وتم تجاهلها. "
+                   f"أمثلة: {results['unmatched_examples']}")
 
     if results.get("duplicate_count", 0) > 0:
-        st.warning(f"⚠️ {results['duplicate_count']} rows had a mobile number that already appeared earlier in the "
-                   f"sheet — only the first occurrence of each number was kept, so no one gets counted or texted twice.")
+        st.warning(f"⚠️ {results['duplicate_count']} صفوف تحتوي على رقم جوال مكرر سبق ظهوره في الملف — "
+                   f"تم الاحتفاظ بالظهور الأول فقط لتفادي إرسال الرسالة أكثر من مرة لنفس الرقم.")
 
     batch_size = st.number_input(
-        "Numbers per Messages batch (splitting avoids link/recipient limits on some phones)",
+        "عدد الأرقام في كل دفعة رسائل (التقسيم يتجنب حدود الروابط/المستلمين في بعض الهواتف)",
         min_value=1, max_value=100, value=20, step=5, key="batch_size",
     )
 
     for title in ["Group 1: 'Yes' or 'USSD'", "Group 2: 'No' AND CashIn < 20", "Group 3: 'No' AND CashIn >= 20"]:
         numbers = results[title]
+        label_ar = GROUP_LABELS_AR[title]
         text_result = ','.join(numbers)
         st.markdown(f"""
             <div class="card">
-                <h4 style="color: #f8fafc; margin-top: 0;">{title}</h4>
-                <p style="color: #94a3b8; font-size: 14px;">Total Items: <b>{len(numbers)}</b></p>
+                <h4 style="color: #f8fafc; margin-top: 0;">{label_ar}</h4>
+                <p style="color: #94a3b8; font-size: 14px;">العدد الإجمالي: <b>{len(numbers)}</b></p>
             </div>
         """, unsafe_allow_html=True)
-        st.text_area(f"Copy {title}", text_result, height=80)
+        st.text_area(f"نسخ {label_ar}", text_result, height=80)
 
         message = GROUP_MESSAGES[title]
-        st.text_area(f"Message for {title} (fixed)", message, height=100, key=f"msg_{title}", disabled=True)
+        st.text_area(f"رسالة {label_ar} (ثابتة)", message, height=100, key=f"msg_{title}", disabled=True)
 
         if numbers:
             batches = chunk_list(numbers, batch_size)
-            st.markdown("<p style='color:#94a3b8; font-size:13px;'>Tap a batch to open Messages with those numbers and the message above pre-filled:</p>", unsafe_allow_html=True)
+            st.markdown("<p style='color:#94a3b8; font-size:13px;'>اضغط على أي دفعة لفتح تطبيق الرسائل مع الأرقام والرسالة أعلاه معبأة مسبقًا:</p>", unsafe_allow_html=True)
 
             # Render strictly in row order (1,2,3 / 4,5,6 ...) instead of
             # round-robin column fill, and force LTR so batch order can't get
@@ -385,7 +397,7 @@ if "results" in st.session_state:
                 for offset, batch in enumerate(row_batches):
                     batch_number = row_start + offset + 1
                     link = build_sms_link(batch, message)
-                    label = f"📲 Batch {batch_number} ({len(batch)})"
+                    label = f"📲 الدفعة {batch_number} ({len(batch)})"
                     with cols[offset]:
                         st.markdown(
                             f'<a href="{link}" target="_blank" dir="ltr" '
@@ -397,4 +409,4 @@ if "results" in st.session_state:
                             unsafe_allow_html=True,
                         )
 elif df_preview is not None:
-    st.info("Select all three columns above to enable processing.")
+    st.info("الرجاء تحديد الأعمدة الثلاثة أعلاه لتفعيل المعالجة.")
