@@ -49,9 +49,6 @@ def normalize_mobile(raw) -> str | None:
     """
     if pd.isna(raw):
         return None
-    # Excel often stores numbers as floats (599000000 -> 599000000.0).
-    # Cast whole-number floats to int first so we don't pick up a stray
-    # trailing digit from the ".0".
     if isinstance(raw, float) and raw.is_integer():
         raw = int(raw)
     digits = re.sub(r"\D", "", str(raw))
@@ -107,6 +104,132 @@ def build_sms_link(numbers_batch, message) -> str:
     return f"sms:{numbers_str}?body={body}"
 
 
+# ---------- Regex-based auto column detection ----------
+# Content is scanned FIRST (across the whole column, not just a sample) and
+# does the real deciding. Header names only add a small confidence bonus —
+# useful as a tiebreaker, but they never override what the data itself shows.
+
+MOBILE_HEADER_RE = re.compile(r"mobile|phone|msisdn|contact|رقم|جوال|هاتف", re.IGNORECASE)
+NUMERIC_HEADER_RE = re.compile(r"cash|amount|value|balance|price|رصيد|مبلغ", re.IGNORECASE)
+LABEL_HEADER_RE = re.compile(r"status|login|label|ussd|type|حالة", re.IGNORECASE)
+
+MOBILE_VALUE_RE = re.compile(r"^\+?\d[\d\s\-]{7,}$")
+NUMERIC_VALUE_RE = re.compile(r"^[+\-]?[\d.,\s$₪]+$")
+LABEL_VALUE_RE = re.compile(r"\b(yes|no|ussd)\b", re.IGNORECASE)
+
+HEADER_BONUS = 0.2  # small nudge, not a decider
+MIN_CONFIDENCE = 0.15  # below this, don't trust the guess at all
+
+
+def _digit_count(v) -> int:
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return len(re.sub(r"\D", "", str(v)))
+
+
+def _mobile_content_score(series: pd.Series) -> float:
+    """
+    A column only really looks like mobile numbers if, once normalized,
+    the last-9-digit local number starts with a real Jawwal/Ooredoo prefix
+    (5xx). Plain "long digit string" isn't enough — that also matches ID
+    numbers, so shape alone can't tell them apart.
+    """
+    vals = series.dropna()
+    if vals.empty:
+        return 0.0
+    total = len(vals)
+    shape_hits = 0
+    prefix_hits = 0
+    for v in vals:
+        norm = normalize_mobile(v)
+        if norm is None:
+            continue
+        shape_hits += 1
+        if norm[1] == "5":  # local9 starts with 5 -> 059x/056x style prefix
+            prefix_hits += 1
+    if shape_hits == 0:
+        return 0.0
+    shape_score = shape_hits / total
+    prefix_score = prefix_hits / shape_hits
+    # Prefix match is what actually distinguishes a phone number from an ID;
+    # shape alone (just "digits, 8+ long") is weighted low on its own.
+    return shape_score * (0.15 + 0.85 * prefix_score)
+
+
+def _numeric_content_score(series: pd.Series) -> float:
+    non_null = series.dropna()
+    if non_null.empty:
+        return 0.0
+    if pd.api.types.is_numeric_dtype(series):
+        shape_score = 1.0
+    else:
+        vals = non_null.astype(str).str.strip()
+        shape_score = vals.apply(lambda v: bool(NUMERIC_VALUE_RE.match(v))).mean()
+    nonzero_frac = (non_null.apply(parse_numeric) != 0).mean()
+    # Cash/amount columns are typically short numbers (a handful of digits).
+    # Long digit runs (9-13 digits) are almost always phone numbers or IDs,
+    # not amounts, so penalize length heavily instead of rewarding "nonzero".
+    avg_digits = non_null.apply(_digit_count).mean()
+    length_score = max(0.0, min(1.0, 1 - (avg_digits - 6) / 6))
+    return shape_score * (0.3 + 0.7 * nonzero_frac) * length_score
+
+
+def _label_content_score(series: pd.Series) -> float:
+    vals = series.dropna().astype(str).str.strip()
+    if vals.empty:
+        return 0.0
+    return vals.apply(lambda v: bool(LABEL_VALUE_RE.search(v))).mean()
+
+
+def auto_detect_columns(df: pd.DataFrame, columns: list):
+    """
+    Scan every column's actual values (whole column, not a sample) and score
+    how well it fits each role. Header name match adds a small bonus on top
+    of the content score. Then assign roles to columns so no two roles claim
+    the same column, giving priority to whichever role has the clearest match.
+    Returns (mobile_idx, numeric_idx, label_idx), falling back to positional
+    defaults (0, 1, 2) when nothing scores above MIN_CONFIDENCE.
+    """
+    scores = {}
+    for i, c in enumerate(columns):
+        series = df[c]
+        header = str(c)
+        m = _mobile_content_score(series)
+        n = _numeric_content_score(series)
+        l = _label_content_score(series)
+        if MOBILE_HEADER_RE.search(header):
+            m = min(1.0, m + HEADER_BONUS)
+        if NUMERIC_HEADER_RE.search(header):
+            n = min(1.0, n + HEADER_BONUS)
+        if LABEL_HEADER_RE.search(header):
+            l = min(1.0, l + HEADER_BONUS)
+        scores[i] = {"mobile": m, "numeric": n, "label": l}
+
+    defaults = {"mobile": 0, "numeric": min(1, len(columns) - 1), "label": min(2, len(columns) - 1)}
+    roles_by_confidence = sorted(
+        ["mobile", "numeric", "label"],
+        key=lambda r: -max(scores[i][r] for i in scores),
+    )
+
+    assigned = {}
+    used = set()
+    for role in roles_by_confidence:
+        best_i, best_score = None, MIN_CONFIDENCE
+        for i in scores:
+            if i in used:
+                continue
+            if scores[i][role] > best_score:
+                best_score, best_i = scores[i][role], i
+        if best_i is None:
+            best_i = defaults[role] if defaults[role] not in used else next(
+                (j for j in range(len(columns)) if j not in used), 0
+            )
+        assigned[role] = best_i
+        used.add(best_i)
+
+    return assigned["mobile"], assigned["numeric"], assigned["label"]
+
+
 # ---------- 1. File Upload Card ----------
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader("📁 1. Source File")
@@ -137,27 +260,21 @@ mobile_col = numeric_col = text_col = None
 if df_preview is not None:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("🧭 2. Map Your Columns")
-    st.markdown("<p style='color:#94a3b8; font-size:13px;'>Column order isn't always the same, so pick them manually.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#94a3b8; font-size:13px;'>Auto-detected from header names and cell contents — override manually if needed.</p>", unsafe_allow_html=True)
 
     columns = list(df_preview.columns)
 
-    def guess_index(keywords, default=0):
-        for i, c in enumerate(columns):
-            if any(k in str(c).lower() for k in keywords):
-                return i
-        return default
+    mobile_idx, numeric_idx, label_idx = auto_detect_columns(df_preview, columns)
 
-    mobile_col = st.selectbox("📱 Mobile Number column", columns,
-                               index=guess_index(["mobile", "phone", "number"], 0))
-    numeric_col = st.selectbox("💰 CashIn / Numeric column", columns,
-                                index=guess_index(["cash", "amount", "value"], min(1, len(columns) - 1)))
-    text_col = st.selectbox("🏷️ Status / Label column (Yes / No / USSD)", columns,
-                             index=guess_index(["status", "login", "label"], min(2, len(columns) - 1)))
+    mobile_col = st.selectbox("📱 Mobile Number column", columns, index=mobile_idx)
+    numeric_col = st.selectbox("💰 CashIn / Numeric column", columns, index=numeric_idx)
+    text_col = st.selectbox("🏷️ Status / Label column (Yes / No / USSD)", columns, index=label_idx)
 
-    # Replace NaN with empty strings for display only — a raw NaN in the
-    # preview table can crash Streamlit's frontend JSON serializer.
-    safe_preview = df_preview.head(5).where(pd.notnull(df_preview.head(5)), "")
-    st.dataframe(safe_preview, use_container_width=True)
+    # Cast everything to plain strings for the preview table. Mixed-type
+    # object columns (e.g. some rows numeric, some text/blank) crash
+    # Streamlit's Arrow conversion otherwise ("Expected bytes, got a float").
+    safe_preview = df_preview.head(5).where(pd.notnull(df_preview.head(5)), "").astype(str)
+    st.dataframe(safe_preview, width="stretch")
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- 3. Process Button & Results ----------
@@ -196,6 +313,11 @@ if df_preview is not None and mobile_col and numeric_col and text_col:
                 "TextVal": df[text_col].apply(normalize_label),
             }).dropna(subset=["Mobile"])
 
+            # Guard against duplicate rows in the source sheet (same customer
+            # entered twice) so nobody gets counted, or texted, more than once.
+            duplicate_count = int(processed_df["Mobile"].duplicated().sum())
+            processed_df = processed_df.drop_duplicates(subset=["Mobile"], keep="first")
+
             g1 = list(processed_df[processed_df["TextVal"] == "yes"]["Mobile"])
             g2 = list(processed_df[(processed_df["TextVal"] == "no") & (processed_df["NumericVal"] < 20)]["Mobile"])
             g3 = list(processed_df[(processed_df["TextVal"] == "no") & (processed_df["NumericVal"] >= 20)]["Mobile"])
@@ -211,6 +333,7 @@ if df_preview is not None and mobile_col and numeric_col and text_col:
                 "Group 3: 'No' AND CashIn >= 20": g3,
                 "unmatched_count": len(unmatched),
                 "unmatched_examples": df[text_col].dropna().astype(str).unique()[:10].tolist(),
+                "duplicate_count": duplicate_count,
             }
         except Exception as e:
             st.error(f"Processing Error: {e}")
@@ -224,6 +347,10 @@ if "results" in st.session_state:
     if results["unmatched_count"] > 0:
         st.warning(f"⚠️ {results['unmatched_count']} rows had a label that wasn't recognized as Yes/USSD/No and were skipped. "
                    f"Examples: {results['unmatched_examples']}")
+
+    if results.get("duplicate_count", 0) > 0:
+        st.warning(f"⚠️ {results['duplicate_count']} rows had a mobile number that already appeared earlier in the "
+                   f"sheet — only the first occurrence of each number was kept, so no one gets counted or texted twice.")
 
     batch_size = st.number_input(
         "Numbers per Messages batch (splitting avoids link/recipient limits on some phones)",
